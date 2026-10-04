@@ -1,0 +1,146 @@
+const {
+    default: makeWASocket,
+    useMultiFileAuthState,
+    DisconnectReason,
+    Browsers,
+    fetchLatestWaWebVersion
+} = require("@whiskeysockets/baileys");
+
+const readline = require("readline");
+
+async function demanderNumero() {
+    const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+    });
+
+    return new Promise((resolve) => {
+        rl.question(
+            "Entre ton numéro WhatsApp avec l'indicatif du pays (ex: 243...) : ",
+            (numero) => {
+                rl.close();
+                resolve(numero.replace(/[^0-9]/g, ""));
+            }
+        );
+    });
+}
+
+async function demarrer() {
+    const { state, saveCreds } =
+        await useMultiFileAuthState("auth_info");
+
+    let version;
+
+    try {
+        const resultat = await fetchLatestWaWebVersion();
+        version = resultat.version;
+
+        console.log(
+            "🌐 Version WhatsApp Web actuelle :",
+            version.join(".")
+        );
+    } catch (erreur) {
+        console.log(
+            "⚠️ Impossible de récupérer la version actuelle de WhatsApp Web."
+        );
+
+        console.log(
+            "Erreur :",
+            erreur.message
+        );
+
+        return;
+    }
+
+    console.log("⏳ Préparation de la connexion...");
+
+    const sock = makeWASocket({
+        auth: state,
+        version: version,
+        browser: Browsers.ubuntu("Chrome"),
+        printQRInTerminal: false
+    });
+
+    sock.ev.on("creds.update", saveCreds);
+
+    sock.ev.on("connection.update", async (update) => {
+        const { connection, lastDisconnect } = update;
+
+        if (connection === "connecting") {
+            console.log("🔄 Connexion à WhatsApp...");
+        }
+
+        if (connection === "open") {
+            console.log("✅ Chancy est connecté à WhatsApp !");
+        }
+
+        if (
+            connection === "connecting" &&
+            !state.creds.registered
+        ) {
+            const numero = await demanderNumero();
+
+            if (!numero) {
+                console.log("❌ Aucun numéro fourni.");
+                return;
+            }
+
+            console.log("⏳ Génération du code de liaison...");
+
+            try {
+                const code =
+                    await sock.requestPairingCode(numero);
+
+                console.log("");
+                console.log("================================");
+                console.log("🔐 CODE DE LIAISON :", code);
+                console.log("================================");
+                console.log("");
+                console.log(
+                    "WhatsApp → Paramètres → Appareils liés"
+                );
+                console.log(
+                    "→ Lier un appareil → Lier avec un numéro de téléphone"
+                );
+                console.log("");
+                console.log(
+                    "⚠️ Utilise le code rapidement."
+                );
+            } catch (erreur) {
+                console.log(
+                    "❌ Impossible de générer le code :",
+                    erreur.message
+                );
+            }
+        }
+
+        if (connection === "close") {
+            const raison =
+                lastDisconnect?.error?.output?.statusCode;
+
+            console.log(
+                "❌ Connexion fermée. Code :",
+                raison ?? "inconnu"
+            );
+
+            if (raison === DisconnectReason.loggedOut) {
+                console.log(
+                    "⚠️ Session déconnectée de WhatsApp."
+                );
+            }
+
+            if (raison === DisconnectReason.connectionLost) {
+                console.log(
+                    "⚠️ Connexion Internet perdue."
+                );
+            }
+        }
+    });
+}
+
+demarrer().catch((erreur) => {
+    console.error(
+        "❌ Erreur générale :",
+        erreur
+    );
+});
