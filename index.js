@@ -1,3 +1,7 @@
+const express = require('express');
+const app = express();
+app.get('/', (req,res)=>res.send('CHANCY-BOT LIVE'));
+app.listen(process.env.PORT || 10000, ()=>console.log('KeepAlive OK'));
 const { default: makeWASocket, useMultiFileAuthState } = require('@whiskeysockets/baileys')
 
 async function start() {
