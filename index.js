@@ -1,57 +1,42 @@
 const http = require('http');
-http.createServer((req,res)=> res.end('CHANCY-BOT LIVE ✅')).listen(process.env.PORT || 10000, ()=> console.log('KeepAlive OK'));
+http.createServer((req,res)=>{res.end('CHANCY-BOT LIVE ✅')}).listen(process.env.PORT||10000,()=>console.log('KeepAlive OK'));
 
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const fs = require('fs');
-const path = require('path');
 const P = require('pino');
-const axios = require('axios');
-const mega = require('mega');
+const { File } = require('megajs');
 
-// Fonction pour charger la session MEGA
-async function loadSession() {
-  if (!fs.existsSync('./auth_info_baileys/creds.json')) {
-    const sessionId = process.env.SESSION_ID;
-    if (sessionId && sessionId.startsWith('mega_')) {
-      console.log('🔄 Chargement de la session MEGA...');
-      // Le décodage mega se fait ici, garde ton code mega_ tel quel
-      const File = require('./mega.js'); // si ton repo a mega.js
-      try { await File(sessionId); } catch(e){ console.log('Utilisation directe SESSION_ID'); }
-    }
-  }
+async function loadMegaSession() {
+  const sessionId = process.env.SESSION_ID;
+  if (!sessionId) return console.log('Pas de SESSION_ID');
+  if (fs.existsSync('./auth_info_baileys/creds.json')) return console.log('Session déjà là');
+  try {
+    console.log('🔄 Chargement MEGA...');
+    const code = sessionId.replace('mega_','');
+    const [fileId, key] = code.split('#');
+    if(!fileId || !key) throw new Error('Format mega_ invalide');
+    const file = File.fromURL(`https://mega.nz/file/${fileId}#${key}`);
+    const buffer = await file.downloadBuffer();
+    fs.mkdirSync('./auth_info_baileys', { recursive: true });
+    fs.writeFileSync('./auth_info_baileys/creds.json', buffer);
+    console.log('✅ Session MEGA OK');
+  } catch(e){ console.log('❌ Erreur MEGA:', e.message); }
 }
 
-async function startBot() {
-  await loadSession();
+async function start() {
+  await loadMegaSession();
   const { state, saveCreds } = await useMultiFileAuthState('./auth_info_baileys');
-  
-  const sock = makeWASocket({
-    auth: state,
-    logger: P({ level: 'silent' }),
-    browser: ["Ubuntu", "Chrome", "20.0"],
-    markOnlineOnConnect: true
-  });
-
+  const sock = makeWASocket({ auth: state, logger: P({level:'silent'}), browser: ["Ubuntu","Chrome","20.0"] });
   sock.ev.on('creds.update', saveCreds);
-
-  sock.ev.on('connection.update', async (update) => {
-    const { connection, lastDisconnect } = update;
-    if (connection === 'open') {
-      console.log('✅ CHANCY-BOT CONNECTÉ !');
-      // charge tes commandes ici
-      try { require('./bot')(sock); } catch(e){ try{ require('./handler')(sock); } catch{} }
-    }
-    if (connection === 'close') {
+  sock.ev.on('connection.update', async (u)=>{
+    const { connection, lastDisconnect } = u;
+    if(connection==='open') console.log('✅ CHANCY-BOT CONNECTÉ SUR WHATSAPP !');
+    if(connection==='close'){
       const reason = new Boom(lastDisconnect?.error)?.output.statusCode;
-      if (reason !== DisconnectReason.loggedOut) {
-        console.log('Reconnexion...');
-        startBot();
-      } else {
-        console.log('Déconnecté, supprime auth et recommence');
-      }
+      if(reason !== DisconnectReason.loggedOut) start();
     }
   });
+  sock.ev.on('messages.upsert', async ()=>{}); // tu ajouteras les commandes après
 }
-
-startBot();
+start();
